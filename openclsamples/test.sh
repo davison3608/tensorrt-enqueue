@@ -1,0 +1,1 @@
+g++ -I /codes/openclsamples/include main.cpp -g -o test -lOpenCL -lclBLAS 
