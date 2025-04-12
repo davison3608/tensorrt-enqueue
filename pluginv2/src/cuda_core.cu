@@ -42,7 +42,7 @@ __global__ static void kernel_leakrelu_khal
     else
         output=__hmul_rn(*alpha_khalf, input);
         
-    value[idx]=output;
+    value[idx]=__half2float(output);
     __threadfence();
     return ;
 }
@@ -1107,7 +1107,7 @@ int32_t Conv1d::initialize() noexcept
         //设定
     cudnnCreateTensorDescriptor(&nn_outputtensor_descr);
     cudnnSetTensor4dDescriptor(nn_outputtensor_descr,
-        nn_tensorformat,
+        cudnnDataType_t::CUDNN_DATA_FLOAT,
         nn_tensorprecision,
         n, c, h, w
     );
@@ -1247,14 +1247,37 @@ int32_t Conv1d::enqueue(int32_t batchSize, void const* const* inputs, void* cons
     //output = alpha * Op(inputs) + beta * output
     float alpha=1.0f; //输入缩放因子
     float beta=0.0f; //输出缩放因子
+
+    float *inputs_flo=static_cast<const float*>(inputs[0]);
+    void *inputs_hal;
+
+    if (this->mtype == NVhalf) 
+    {
+        //压缩
+    int32_t inputs_elements=batchSize * channels * height * width;
+    AccHalf::Accuracyhalf(inputs_flo, &inputs_hal, inputs_elements);
+
     cudnnStatus_t status=cudnnConvolutionForward(nn_handle_descr,
-        &alpha, nn_inputtensor_descr, inputs[0], //输入tensor
-        nn_conv1d_filter_descr, cu_weightsptr, //滤波句柄 权重指针 
-        nn_conv1d_descr, //操作句柄
-        nn_conv_bestalgo_descr, //算法选择
-        cu_workptr, cu_workspacesize, //推理空间
-        &beta, nn_outputtensor_descr, outputs[0] //输出tensor
+    &alpha, nn_inputtensor_descr, inputs_hal, //输入tensor
+    nn_conv1d_filter_descr, cu_weightsptr, //滤波句柄 权重指针 
+    nn_conv1d_descr, //操作句柄
+    nn_conv_bestalgo_descr, //算法选择
+    cu_workptr, cu_workspacesize, //推理空间
+    &beta, nn_outputtensor_descr, outputs[0] //输出tensor
     );
+
+    cudaFreeAsync(inputs_hal, stream);
+    } 
+    else 
+    cudnnStatus_t status=cudnnConvolutionForward(nn_handle_descr,
+    &alpha, nn_inputtensor_descr, inputs[0], //输入tensor
+    nn_conv1d_filter_descr, cu_weightsptr, //滤波句柄 权重指针 
+    nn_conv1d_descr, //操作句柄
+    nn_conv_bestalgo_descr, //算法选择
+    cu_workptr, cu_workspacesize, //推理空间
+    &beta, nn_outputtensor_descr, outputs[0] //输出tensor
+    );
+
     assert(status == CUDNN_STATUS_SUCCESS);
     cudaStreamSynchronize(stream);
     //添加偏置
