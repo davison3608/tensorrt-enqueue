@@ -1,0 +1,74 @@
+logger log;
+
+auto builder=createInferBuilder(log);
+builder->setMaxBatchSize(4);
+
+auto network=builder->createNetworkV2(0);
+
+auto input=network->addInput("input0", NVfloat, Dims3{3, 24, 24});
+
+float alpha=0.02f;
+PluginField alphapf("alpha", &alpha, PluginFieldType::kFLOAT32, (int32_t)1);
+PluginFieldCollection leakfc;
+leakfc.nbFields=1;
+leakfc.fields=&alphapf;
+leakrelucreator leakcreator;
+IPluginV2 *leakplugin=leakcreator.createPlugin("", &leakfc);
+
+auto leaklayer=network->addPluginV2(&input, 1, *leakplugin);
+leaklayer->setName("leakrelulayer");
+
+int nboutput=leaklayer->getNbOutputs();
+//leaklayer->setPrecision()
+auto leaklayertype=leaklayer->getType();
+auto leaklayerdatatype=leaklayer->getOutput(nboutput - 1)->getType();
+switch (leaklayerdatatype)
+{
+case NVfloat:
+cout<<"leaklayerdatatype is NVfloat \n";
+    break;
+case NVhalf:
+cout<<"leaklayerdatatype is NVhalf \n";
+    break;
+default:
+    break;
+}
+
+network->markOutput(*leaklayer->getOutput(nboutput - 1));
+
+auto config=builder->createBuilderConfig();
+
+auto engine=builder->buildEngineWithConfig(*network, *config);
+auto hostmemory=engine->serialize();
+
+std::ofstream file;
+file.open("/codes/nvnn/testcodes/leakrelu.trt", ios::out|ios::binary|ios::app);
+assert(file.is_open());
+file.write(static_cast<char*>(hostmemory->data()), hostmemory->size());
+file.close();
+
+auto runtime=createInferRuntime(log);
+
+std::ifstream infile;
+infile.open("/codes/nvnn/testcodes/leakrelu.trt", ios::in|ios::binary);
+assert(infile.is_open());
+std::size_t size;
+infile.seekg(0, ios::end);
+size=infile.tellg();
+infile.seekg(0, ios::beg);
+
+std::vector<char> enginedatas;
+enginedatas.resize(size / sizeof(char));
+infile.read(enginedatas.data(), size);
+assert(!enginedatas.empty());
+infile.close();
+
+if (infile.gcount() != static_cast<std::streamsize>(size)) {
+std::cerr << "Failed to read engine file completely." << std::endl;
+return {};
+}
+
+auto enginedeser=runtime->deserializeCudaEngine(enginedatas.data(), size);
+
+cout<<"engine IONbTensors"<<enginedeser->getNbIOTensors()<<endl;
+cout<<"engine Input Tensor name"<<enginedeser->getIOTensorName(0)<<endl;
